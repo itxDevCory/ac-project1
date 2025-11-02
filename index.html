@@ -1,1 +1,324 @@
-// New File
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Flip-Flap Board Web Component</title>
+    <style>
+      :root {
+        color-scheme: dark light;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        background: radial-gradient(circle at top, #1e2430, #07090f 70%);
+        font-family: "IBM Plex Sans", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+          sans-serif;
+      }
+
+      h1 {
+        position: absolute;
+        top: clamp(1.5rem, 4vw, 3rem);
+        color: rgba(255, 255, 255, 0.7);
+        font-weight: 400;
+        letter-spacing: 0.3em;
+        text-transform: uppercase;
+        font-size: clamp(0.9rem, 2vw, 1.4rem);
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Arrivals &amp; Departures</h1>
+    <flip-flap-board></flip-flap-board>
+
+    <script>
+      class FlipFlapBoard extends HTMLElement {
+        static observedAttributes = ["messages", "interval"];
+
+        constructor() {
+          super();
+          this.attachShadow({ mode: "open" });
+          this.interval = 3500;
+          this.messages = [
+            "BOARDING NOW",
+            "NEXT STOP PARIS",
+            "FINAL CALL",
+            "WELCOME ABOARD",
+          ];
+          this._cells = [];
+          this._currentIndex = 0;
+          this._timer = null;
+
+          this.shadowRoot.innerHTML = `
+            <style>
+              :host {
+                display: block;
+                font-size: clamp(1.2rem, 5vw, 2.6rem);
+                perspective: 1000px;
+              }
+
+              .board {
+                display: flex;
+                gap: 0.6rem;
+                padding: clamp(1rem, 4vw, 2.4rem) clamp(1.2rem, 4vw, 2.8rem);
+                background: linear-gradient(160deg, #171c24, #0c0f14);
+                border-radius: 1.2rem;
+                box-shadow: 0 1.6rem 3.5rem rgba(0, 0, 0, 0.5), inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+              }
+
+              .cell {
+                width: 1.8ch;
+                position: relative;
+                perspective: 1200px;
+                text-transform: uppercase;
+                color: #fefefe;
+              }
+
+              .cell::after {
+                content: "";
+                position: absolute;
+                inset: 0;
+                border-radius: 0.4rem;
+                background: rgba(0, 0, 0, 0.15);
+                box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.03);
+              }
+
+              .card {
+                position: relative;
+                width: 100%;
+                height: clamp(2.8rem, 8vw, 4.8rem);
+                transform-style: preserve-3d;
+              }
+
+              .face {
+                position: absolute;
+                width: 100%;
+                height: 50%;
+                display: grid;
+                place-items: center;
+                background: linear-gradient(180deg, #10141c, #07090f);
+                border-radius: 0.4rem;
+                overflow: hidden;
+                font-variant-numeric: tabular-nums;
+                font-weight: 600;
+                letter-spacing: 0.12ch;
+                backface-visibility: hidden;
+              }
+
+              .top {
+                top: 0;
+                transform-origin: center bottom;
+                border-bottom: 2px solid rgba(0, 0, 0, 0.7);
+              }
+
+              .bottom {
+                bottom: 0;
+                transform-origin: center top;
+                border-top: 2px solid rgba(0, 0, 0, 0.7);
+              }
+
+              .back.top {
+                transform: rotateX(180deg);
+              }
+
+              .back.bottom {
+                transform: rotateX(-180deg);
+              }
+
+              .card.flip .front.top {
+                animation: flipTop 0.65s ease-in forwards;
+              }
+
+              .card.flip .back.bottom {
+                animation: flipBottom 0.65s ease-out forwards;
+              }
+
+              @keyframes flipTop {
+                0% {
+                  transform: rotateX(0deg);
+                }
+                100% {
+                  transform: rotateX(-180deg);
+                }
+              }
+
+              @keyframes flipBottom {
+                0% {
+                  transform: rotateX(180deg);
+                }
+                100% {
+                  transform: rotateX(0deg);
+                }
+              }
+
+              .separator {
+                width: 0.6rem;
+              }
+
+              .separator::after {
+                display: none;
+              }
+            </style>
+            <div class="board" role="presentation" aria-live="polite"></div>
+          `;
+        }
+
+        connectedCallback() {
+          if (this.hasAttribute("messages")) {
+            this.messages = this._parseMessages(this.getAttribute("messages"));
+          }
+
+          if (this.hasAttribute("interval")) {
+            const parsed = Number(this.getAttribute("interval"));
+            if (!Number.isNaN(parsed) && parsed > 500) {
+              this.interval = parsed;
+            }
+          }
+
+          this._buildBoard();
+          this._render(this.messages[this._currentIndex]);
+          this._scheduleNext();
+        }
+
+        disconnectedCallback() {
+          this._clearTimer();
+        }
+
+        attributeChangedCallback(name, oldValue, newValue) {
+          if (oldValue === newValue || !this.isConnected) return;
+
+          if (name === "messages") {
+            this.messages = this._parseMessages(newValue);
+            this._currentIndex = 0;
+            this._buildBoard();
+            this._render(this.messages[this._currentIndex]);
+          }
+
+          if (name === "interval") {
+            const parsed = Number(newValue);
+            if (!Number.isNaN(parsed) && parsed > 500) {
+              this.interval = parsed;
+              this._restartCycle();
+            }
+          }
+        }
+
+        _parseMessages(value) {
+          try {
+            const parsed = JSON.parse(value);
+            if (Array.isArray(parsed) && parsed.length) {
+              return parsed.map((msg) => String(msg).toUpperCase());
+            }
+          } catch (err) {
+            console.warn("flip-flap-board: expected JSON array for messages attribute", err);
+          }
+          return this.messages;
+        }
+
+        _buildBoard() {
+          const board = this.shadowRoot.querySelector(".board");
+          board.innerHTML = "";
+          this._cells = [];
+
+          const longest = this.messages.reduce((max, msg) => Math.max(max, msg.length), 0);
+
+          for (let i = 0; i < longest; i += 1) {
+            const cell = this._createCell();
+            this._cells.push(cell);
+            board.appendChild(cell.wrapper);
+          }
+        }
+
+        _createCell() {
+          const wrapper = document.createElement("div");
+          wrapper.className = "cell";
+
+          const card = document.createElement("div");
+          card.className = "card";
+
+          const frontTop = document.createElement("div");
+          frontTop.className = "face front top";
+          const frontBottom = document.createElement("div");
+          frontBottom.className = "face front bottom";
+          const backTop = document.createElement("div");
+          backTop.className = "face back top";
+          const backBottom = document.createElement("div");
+          backBottom.className = "face back bottom";
+
+          card.append(frontTop, frontBottom, backTop, backBottom);
+          wrapper.appendChild(card);
+
+          return {
+            wrapper,
+            card,
+            frontTop,
+            frontBottom,
+            backTop,
+            backBottom,
+            value: " ",
+          };
+        }
+
+        _render(message = "") {
+          const padded = message.padEnd(this._cells.length, " ");
+          padded.split("").forEach((char, index) => {
+            const cell = this._cells[index];
+            if (!cell) return;
+            if (cell.value === char) return;
+
+            this._flipCell(cell, char);
+          });
+        }
+
+        _flipCell(cell, nextChar) {
+          const previous = cell.value;
+          cell.frontTop.textContent = previous;
+          cell.frontBottom.textContent = previous;
+          cell.backTop.textContent = nextChar;
+          cell.backBottom.textContent = nextChar;
+
+          cell.card.classList.remove("flip");
+          // Force reflow so consecutive flips retrigger animation
+          void cell.card.offsetWidth;
+          cell.card.classList.add("flip");
+
+          const handleAnimationEnd = () => {
+            cell.value = nextChar;
+            cell.frontTop.textContent = nextChar;
+            cell.frontBottom.textContent = nextChar;
+            cell.card.classList.remove("flip");
+            cell.card.removeEventListener("animationend", handleAnimationEnd);
+          };
+
+          cell.card.addEventListener("animationend", handleAnimationEnd, { once: true });
+        }
+
+        _scheduleNext() {
+          this._clearTimer();
+          this._timer = setTimeout(() => {
+            this._currentIndex = (this._currentIndex + 1) % this.messages.length;
+            this._render(this.messages[this._currentIndex]);
+            this._scheduleNext();
+          }, this.interval);
+        }
+
+        _restartCycle() {
+          this._clearTimer();
+          this._scheduleNext();
+        }
+
+        _clearTimer() {
+          if (this._timer) {
+            clearTimeout(this._timer);
+            this._timer = null;
+          }
+        }
+      }
+
+      customElements.define("flip-flap-board", FlipFlapBoard);
+    </script>
+  </body>
+</html>
